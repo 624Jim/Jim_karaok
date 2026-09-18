@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>🎤 點歌機</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+/* 所有按鈕按下都要有明顯回饋（變暗+縮小），不然不知道是卡住還是沒按到 */
+button:active { filter:brightness(.65) saturate(1.2); transform:scale(.93); transition:filter .04s, transform .04s; }
+:root {
+  --bg:#14141f;
+  --panel:#1f1f33;
+  --panel2:#26264099;
+  --accent:#e94560;
+  --accent2:#ff6b9d;
+  --purple:#7c5cff;
+  --text:#eee;
+  --sub:#9292b3;
+}
+html,body { height:100%; }
+body {
+  font-family:-apple-system,'Segoe UI',Roboto,'Noto Sans TC',sans-serif;
+  background:radial-gradient(900px 500px at 80% -10%, #3a1d6e 0%, var(--bg) 60%);
+  color:var(--text);
+  overflow-x:hidden;
+}
+
+/* ===== 頂部：正在播放 ===== */
+.np {
+  background:linear-gradient(135deg,rgba(233,69,96,.25),rgba(124,92,255,.25));
+  border-bottom:1px solid rgba(255,255,255,.08);
+  padding:16px 18px calc(16px + env(safe-area-inset-top));
+  position:sticky; top:0; z-index:20;
+  background:rgba(20,20,50,.97);
+}
+.np .label { font-size:.72rem; color:var(--accent2); letter-spacing:2px; font-weight:700; }
+.np .song { font-size:1.1rem; font-weight:700; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.np .meta { font-size:.8rem; color:var(--sub); margin-top:2px; display:flex; align-items:center; gap:6px; }
+.dot { width:8px; height:8px; border-radius:50%; background:#4ade80; display:inline-block; animation:pulse 1.2s infinite; }
+.dot.paused { background:#f59e0b; animation:none; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+.qrbtn {
+  position:absolute; top:12px; right:14px; width:38px; height:38px; border-radius:50%;
+  border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.1); cursor:pointer;
+  font-size:1.1rem; color:#fff; display:flex; align-items:center; justify-content:center; transition:.15s;
+}
+.qrbtn:hover { background:rgba(255,255,255,.22); }
+.qrbtn:active { transform:scale(.92); }
+.qroverlay {
+  position:fixed; inset:0; z-index:60; display:none; align-items:center; justify-content:center;
+  background:rgba(10,10,25,.72); backdrop-filter:blur(3px); padding:24px;
+}
+.qroverlay.show { display:flex; }
+.qrbox {
+  position:relative; background:linear-gradient(150deg,#2a2050,#1c1c2e 60%,#171722);
+  border:1px solid rgba(255,255,255,.14); border-radius:22px; padding:28px 30px 22px;
+  text-align:center; box-shadow:0 24px 70px rgba(0,0,0,.6); max-width:320px; width:100%;
+}
+.qrclose {
+  position:absolute; top:10px; right:12px; width:30px; height:30px; border-radius:50%;
+  border:none; background:rgba(255,255,255,.14); color:#fff; font-size:.95rem; cursor:pointer;
+}
+.qrt { font-size:1.15rem; font-weight:800; margin-bottom:14px; }
+.qrbox img {
+  display:block; width:220px; height:220px; margin:0 auto; border-radius:10px;
+  background:#fff; padding:10px;
+}
+.qrsub { margin-top:14px; font-size:.78rem; color:#b7aee0; line-height:1.5; }
+.disc { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.disc-bar { flex:1; height:6px; border-radius:999px; background:rgba(255,255,255,.12); overflow:hidden; }
+.disc-fill { height:100%; width:0%; border-radius:999px; background:linear-gradient(90deg,#4ade80,#22c55e); transition:width .4s; }
+.disc-fill.warn { background:linear-gradient(90deg,#f59e0b,#ff6b3d); }
+.disc-fill.danger { background:linear-gradient(90deg,#e94560,#ff2d55); }
+.disc-txt { font-size:.68rem; color:var(--sub); white-space:nowrap; }
+
+/* ===== 標籤切換 ===== */
+.tabs { display:flex; gap:8px; padding:12px 16px; }
+.tabs button {
+  flex:1; padding:12px; border:none; border-radius:12px;
+  background:var(--panel); color:var(--sub); font-size:.95rem; font-weight:700; cursor:pointer;
+  transition:.2s;
+}
+.tabs button.active {
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#fff;
+  box-shadow:0 6px 18px rgba(233,69,96,.35);
+}
+
+/* ===== 搜尋 ===== */
+.search { padding:0 16px 6px; }
+.search input {
+  width:100%; padding:13px 16px; border:none; border-radius:12px;
+  background:var(--panel); color:var(--text); font-size:1rem; outline:none;
+  border:1px solid transparent;
+}
+.search input:focus { border-color:var(--purple); }
+
+/* ===== 列表 ===== */
+.list { padding:6px 16px calc(150px + env(safe-area-inset-bottom)); }
+.card {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  background:var(--panel); border-radius:14px; padding:12px 14px; margin-bottom:10px;
+  border:1px solid rgba(255,255,255,.05);
+}
+.card .avatar {
+  width:44px; height:44px; border-radius:10px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.3rem;
+  background:linear-gradient(135deg,var(--purple),var(--accent2));
+}
+.card .info { flex:1 1 55%; min-width:0; }
+.card .name { font-size:.98rem; font-weight:700; white-space:normal; word-break:break-word; }
+.card .artist { font-size:.78rem; color:var(--sub); margin-top:2px; white-space:normal; word-break:break-word; }
+.card .badge { font-size:.6rem; font-weight:600; padding:1px 7px; border-radius:999px; margin-right:5px; white-space:nowrap; }
+.card .badges { margin-top:3px; }
+.badge.bg-yes { background:rgba(76,175,80,.16); color:#7fe08a; border:1px solid rgba(76,175,80,.4); }
+.badge.bg-mix { background:rgba(233,69,96,.15); color:#ff9db3; border:1px solid rgba(233,69,96,.35); }
+.badge.bg-vocal { background:rgba(33,150,243,.15); color:#7fc7ff; border:1px solid rgba(33,150,243,.4); }
+.badge.bg-noled { background:rgba(255,167,38,.15); color:#ffc46b; border:1px solid rgba(255,167,38,.4); }
+.badge.bg-no { background:rgba(120,120,130,.2); color:#aab; border:1px solid rgba(120,120,130,.45); }
+.card .btns { display:flex; gap:8px; flex:none; width:100%; justify-content:flex-end; }
+.card .btns button {
+  border:none; border-radius:10px; padding:10px 14px; font-size:.85rem; font-weight:700; cursor:pointer;
+  color:#fff; flex:none; transition:.15s;
+}
+.card .btns .listen { background:linear-gradient(135deg,#4ade80,#22c55e); box-shadow:0 4px 12px rgba(34,197,94,.3); }
+.card .btns .listen.playing { background:linear-gradient(135deg,#f59e0b,#ff6b3d); }
+.card .btns .del { background:rgba(255,80,90,.15); color:#ff7b85; border:1px solid rgba(255,80,90,.35); padding:10px 11px; font-size:.95rem; }
+.card .btns .del:hover { background:rgba(255,80,90,.9); color:#fff; }
+.card .btns .bk { background:rgba(255,255,255,.12); color:#cfcfe8; border:1px solid rgba(255,255,255,.22); padding:10px 11px; font-size:.9rem; }
+.card .btns .bk:hover { background:rgba(255,255,255,.28); }
+.card .btns .add { background:linear-gradient(135deg,var(--accent),var(--accent2)); box-shadow:0 4px 12px rgba(233,69,96,.3); }
+.card.hot::after { content:'♥ 熱門'; font-size:.68rem; color:#4ade80; flex:none; }
+.qitem.played { opacity:.55; }
+.qitem.played .qseek input.qrange { opacity:.25; }
+.qitem .replay { border:none; border-radius:10px; background:linear-gradient(135deg,#f59e0b,#ff6b3d); color:#fff; padding:11px 12px; font-size:.9rem; font-weight:700; cursor:pointer; flex:none; }
+.qitem .replay:active { transform:scale(.95); }
+.qbar { height:4px; border-radius:999px; background:rgba(255,255,255,.1); margin-top:6px; overflow:hidden; }
+.qbarfill { height:100%; width:0%; background:linear-gradient(90deg,#4ade80,#22c55e); transition:width .5s linear; }
+.qbarfill.paused { background:#f59e0b; }
+.qtxt { font-size:.65rem; color:var(--sub); margin-top:2px; min-height:1em; }
+.qseek { position:relative; height:20px; margin-top:6px; }
+.qseek .qbar { position:absolute; top:8px; left:0; right:0; margin:0; }
+.qseek input.qrange {
+  -webkit-appearance:none; appearance:none; position:absolute; inset:0; z-index:2;
+  width:100%; height:20px; margin:0; padding:0; background:transparent; cursor:pointer;
+}
+.qrange::-webkit-slider-runnable-track { height:4px; border-radius:999px; background:transparent; }
+.qrange::-webkit-slider-thumb {
+  -webkit-appearance:none; width:16px; height:16px; border-radius:50%; margin-top:-6px;
+  background:#fff; border:3px solid var(--accent); box-shadow:0 1px 6px rgba(0,0,0,.5);
+}
+.qrange::-moz-range-track { height:4px; border-radius:999px; background:transparent; }
+.qrange::-moz-range-thumb {
+  width:13px; height:13px; border:3px solid var(--accent); border-radius:50%; background:#fff;
+}
+
+/* ===== 手機直播條 ===== */
+.miniplayer {
+  position:fixed; left:0; right:0; bottom:0; z-index:40;
+  background:rgba(20,20,31,.98);
+  border-top:1px solid rgba(255,255,255,.1);
+  padding:10px 16px calc(12px + env(safe-area-inset-bottom));
+  display:none;
+}
+.miniplayer.show { display:block; }
+.miniplayer .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.miniplayer .mhead { display:flex; align-items:center; gap:10px; }
+.miniplayer .mname { flex:1; font-size:.85rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#eee; }
+.miniplayer .mclose { border:none; background:rgba(255,255,255,.12); color:#fff; width:30px; height:30px; border-radius:50%; font-size:.9rem; cursor:pointer; flex:none; }
+.miniplayer .mclose:active { transform:scale(.92); }
+.miniplayer video { width:100%; max-height:200px; border-radius:10px; background:#000; margin-top:8px; }
+.miniplayer .lyrics {
+  width:100%; text-align:center; margin-top:10px; padding:12px;
+  background:rgba(124,92,255,.12); border-radius:12px; min-height:44px;
+  display:flex; align-items:center; justify-content:center;
+}
+.miniplayer .lyrics span {
+  font-size:1.15rem; font-weight:700; color:#fff;
+  text-shadow:0 0 12px rgba(233,69,96,.6);
+  line-height:1.4;
+}
+.empty { text-align:center; color:var(--sub); padding:32px 0; }
+
+/* ===== 佇列頁 ===== */
+.qitem {
+  display:flex; align-items:center; gap:12px;
+  background:var(--panel); border-radius:12px; padding:11px 14px; margin-bottom:8px;
+}
+.qitem .no {
+  width:26px; height:26px; flex:none; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:.72rem; font-weight:800; background:rgba(255,255,255,.08); color:var(--sub);
+}
+.qitem .no.next { background:var(--accent); color:#fff; }
+.qitem .no.now { background:#4ade80; color:#111; }
+.qitem .info { flex:1; min-width:0; }
+.qitem .name { font-size:.92rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.qitem .tag { font-size:.68rem; color:var(--accent2); }
+.qitem .rm { border:none; background:rgba(255,80,90,.12); color:#ff7b85; border-radius:8px; width:28px; height:28px; flex:none; font-size:.85rem; cursor:pointer; transition:.15s; }
+.qitem .rm:hover { background:rgba(255,80,90,.9); color:#fff; }
+.qitem .rm:active { transform:scale(.9); }
+
+/* ===== 底部安全條 ===== */
+.banner { display:none; }
+
+/* ===== 底部控制列 ===== */
+.controls {
+  position:fixed; left:0; right:0; bottom:0; z-index:30;
+  background:rgba(20,20,31,.95);
+  backdrop-filter:blur(10px);
+  border-top:1px solid rgba(255,255,255,.08);
+  padding:10px 16px calc(12px + env(safe-area-inset-bottom));
+}
+.controls .row { display:flex; align-items:center; gap:8px; }
+.controls .cbtn {
+  flex:1; padding:13px 0; border:none; border-radius:12px; cursor:pointer;
+  background:var(--panel); color:var(--text); font-size:.95rem; font-weight:700;
+  transition:.15s; text-align:center;
+}
+.controls .cbtn:active { transform:scale(.95); }
+.controls .cbtn.accent { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; }
+.controls .volrow { display:flex; align-items:center; gap:10px; margin-top:10px; }
+.controls .volrow .vicon { color:var(--sub); font-size:.9rem; }
+.controls input[type=range] { flex:1; accent-color:var(--accent); height:28px; }
+.controls .pct { color:var(--sub); font-size:.75rem; width:34px; text-align:right; }
+.moderow { margin-top:10px; }
+.modetabs { display:flex; gap:8px; padding:0; }
+.modetabs .mode-btn {
+  flex:1; padding:10px; margin:0; border:none; border-radius:12px; cursor:pointer;
+  background:linear-gradient(135deg,rgba(124,92,255,.15),rgba(233,69,96,.15));
+  color:var(--sub); font-size:.9rem; font-weight:700; transition:.15s;
+}
+.modetabs .mode-btn.active {
+  background:linear-gradient(135deg,var(--purple),var(--accent2));
+  color:#fff; box-shadow:0 6px 18px rgba(233,69,96,.3);
+}
+
+/* ===== 點完歌的通知 ===== */
+.toast {
+  position:fixed; left:50%; bottom:120px; transform:translateX(-50%) translateY(20px);
+  background:#111; color:#fff; border-radius:999px; padding:12px 22px; font-size:.9rem;
+  opacity:0; transition:all .3s; pointer-events:none; z-index:99;
+  box-shadow:0 8px 30px rgba(0,0,0,.5);
+}
+.toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ===== 网址下载区 ===== */
+.urlbox {
+  padding:0 16px 10px;
+}
+.urlbox .row { display:flex; gap:8px; }
+.urlbox input {
+  flex:1; padding:12px 14px; border:none; border-radius:12px;
+  background:var(--panel); color:var(--text); font-size:.9rem; outline:none;
+  border:1px solid transparent;
+}
+.urlbox input:focus { border-color:var(--purple); }
+.urlbox .dlbtn {
+  border:none; border-radius:12px; padding:12px 18px; font-size:.9rem; font-weight:700;
+  background:linear-gradient(135deg,var(--purple),#4ade80); color:#fff; cursor:pointer;
+  box-shadow:0 4px 12px rgba(124,92,255,.3); transition:.15s; white-space:nowrap;
+}
+.urlbox .dlbtn:active { transform:scale(.95); }
+.urlbox .dlbtn:disabled { opacity:.5; cursor:not-allowed; }
+.urlbox .hint {
+  font-size:.72rem; color:var(--sub); margin-top:6px; line-height:1.4;
+}
+.urlbox .progress {
+  display:none; margin-top:8px; padding:10px 14px;
+  background:var(--panel); border-radius:10px; font-size:.85rem; color:var(--accent2);
+}
+.urlbox .progress.show { display:flex; flex-direction:column; align-items:stretch; }
+.urlbox .progress .bar { width:100%; height:8px; background:rgba(255,255,255,.12); border-radius:999px; overflow:hidden; margin-top:8px; }
+.urlbox .progress .barfill { height:100%; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:999px; }
+.urlbox .spinner {
+  width:18px; height:18px; border:2px solid rgba(255,255,255,.2);
+  border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ===== YouTube 搜寻结果 ===== */
+.yt-item {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  background:var(--panel); border-radius:14px; padding:12px 14px; margin-bottom:10px;
+  border:1px solid rgba(255,255,255,.05);
+}
+.yt-item .yt-info { flex:1; min-width:0; }
+.yt-item .yt-title { font-size:.92rem; font-weight:700; white-space:normal; word-break:break-word; }
+.yt-item .yt-artist { font-size:.75rem; color:var(--sub); margin-top:2px; white-space:normal; word-break:break-word; }
+.yt-item .yt-time { font-size:.72rem; color:var(--accent2); margin-top:2px; }
+.yt-item .yt-tag { font-size:.6rem; font-weight:700; padding:1px 7px; border-radius:999px; margin-left:6px; vertical-align:2px; }
+.yt-item .yt-tag.tag-song { background:rgba(76,175,80,.18); color:#7fe08a; border:1px solid rgba(76,175,80,.4); }
+.yt-item .yt-tag.tag-live { background:rgba(33,150,243,.18); color:#7fc7ff; border:1px solid rgba(33,150,243,.4); }
+.yt-item .yt-tag.tag-other { background:rgba(120,120,130,.22); color:#aab; border:1px solid rgba(120,120,130,.45); }
+.yt-item .yt-dl {
+  border:none; border-radius:10px; padding:10px 14px; font-size:.85rem; font-weight:700; cursor:pointer;
+  color:#fff; background:linear-gradient(135deg,var(--accent),var(--accent2)); flex:none;
+  box-shadow:0 4px 12px rgba(233,69,96,.3); transition:.15s;
+}
+.yt-item .yt-dl:active { transform:scale(.95); }
+.yt-item .yt-dl:disabled { opacity:.5; cursor:not-allowed; }
+.yt-item .yt-btns { display:flex; gap:6px; flex:none; align-items:center; width:100%; justify-content:flex-end; }
+.yt-item .yt-play {
+  border:none; border-radius:10px; padding:9px 12px; font-size:.85rem; font-weight:700; cursor:pointer;
+  background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; flex:none;
+}
+.yt-item .yt-play:active { transform:scale(.95); }
+.yt-item .yt-play:disabled { opacity:.5; cursor:not-allowed; }
+
+/* 大屏 kiosk 轻量模式（树莓派）：去掉 GPU 昂贵特效，手机界面不变 */
+body.lite { background:var(--bg); }
+body.lite *, body.lite *::before, body.lite *::after { box-shadow:none !important; text-shadow:none !important; transition:none !important; animation:none !important; }
+body.lite { background-image:none; }
+</style>
+</head>
+<body>
+<script>if(location.search.indexOf('lite=1')>=0)document.body.classList.add('lite');</script>
+
+<div class="np">
+  <div class="label">NOW PLAYING</div>
+  <div class="song" id="npSong">尚未播放</div>
+  <div class="meta"><span class="dot" id="npDot"></span><span id="npStatus">等待點歌...</span><span id="npPos"></span></div>
+  <button class="qrbtn" id="qrBtn" title="手機掃碼進入點歌" onclick="toggleQR()">📱</button>
+  <div class="disc">
+    <div class="disc-bar"><div class="disc-fill" id="diskFill"></div></div>
+    <span class="disc-txt" id="diskTxt">💾 --.--G</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="active" data-tab="songs">🎵 點歌</button>
+  <button data-tab="queue">📋 播放清單 <span id="queueCount" style="background:rgba(255,255,255,.15);border-radius:999px;padding:1px 7px;font-size:.72rem;"></span></button>
+</div>
+
+<div class="search">
+  <input id="q" type="search" placeholder="🔍 搜尋歌名 / 歌手...">
+</div>
+
+<div class="urlbox">
+  <div class="row">
+    <input id="urlInput" type="url" placeholder="🔗 貼上 YouTube / B站 網址...">
+    <button class="dlbtn" id="dlBtn" onclick="downloadUrl()">⬇ 下載</button>
+  </div>
+  <div class="hint">支援 YouTube、Bilibili、優酷等 yt-dlp 支援的網站</div>
+  <div class="progress" id="dlProgress">
+    <div style="display:flex;align-items:center;gap:8px;"><div class="spinner"></div><span id="dlStatus">下載中...</span></div>
+    <div class="bar" id="dlBar" style="display:none;"><div class="barfill" id="dlFill"></div></div>
+  </div>
+</div>
+
+<div class="urlbox">
+  <div class="row">
+    <input id="ytSearch" type="search" placeholder="🔍 搜尋 YouTube 歌曲 (輸入歌名+歌手)...">
+    <button class="dlbtn" id="ytSearchBtn" onclick="ytSearch()" style="background:linear-gradient(135deg,#e94560,#ff6b9d);">搜尋</button>
+  </div>
+  <div id="ytResults" style="margin-top:10px;"></div>
+</div>
+
+<div id="songsView" class="list"></div>
+<div id="queueView" class="list" style="display:none;"></div>
+
+<div class="controls">
+  <div class="row">
+    <button class="cbtn" id="btnPrev">⏮</button>
+    <button class="cbtn accent" id="btnPause">⏸</button>
+    <button class="cbtn" id="btnNext">⏭</button>
+  </div>
+  <div class="moderow" id="modeRow" style="display:none;">
+    <div class="tabs modetabs">
+      <button class="mode-btn active" data-mode="lead">🎤 導唱</button>
+      <button class="mode-btn" data-mode="backing">🎵 伴奏</button>
+    </div>
+  </div>
+  <div class="volrow">
+    <span class="vicon">🔉</span>
+    <input type="range" id="vol" min="0" max="100" value="100" step="5">
+    <span class="pct" id="volPct">100</span>
+  </div>
+</div>
+
+<div class="miniplayer" id="miniPlayer">
+  <div class="mhead">
+    <span class="mname" id="mName">手機播放中</span>
+    <button class="mclose" id="mClose" title="關閉試聽" onclick="closeMini()">✕</button>
+  </div>
+  <video id="mVideo" controls preload="none" playsinline></video>
+  <div class="lyrics" id="lyricsBox"><span id="lyricLine">點歌後顯示歌詞...</span></div>
+</div>
+
+<div class="toast" id="toast">已加入播放清單</div>
+
+<div class="qroverlay" id="qrOverlay" onclick="toggleQR()">
+  <div class="qrbox" onclick="event.stopPropagation()">
+    <button class="qrclose" onclick="toggleQR()">✕</button>
+    <div class="qrt">📱 掃碼點歌</div>
+    <img id="qrImg" alt="QR Code">
+    <div class="qrsub">手機連同一個 Wi-Fi，<br>掃描 QR Code 就能開始點歌</div>
+  </div>
+</div>
+
+<script>
+// iOS Safari 預設不會在 tap 時觸發 :active 偽類，要有 touch 監聽器才會生效，
+// 不然按鈕按下去完全沒有變色/縮小的回饋，讓人以為卡住了
+document.addEventListener('touchstart', function(){}, {passive:true});
+
+let songs = [];
+let currentTab = 'songs';
+let lastQueueLen = -1;
+
+async function loadSongs(q='') {
+  const url = '/api/songs' + (q ? '?q=' + encodeURIComponent(q) : '');
+  try {
+    const res = await fetch(url);
+    songs = await res.json();
+  } catch(e) { songs = []; }
+  renderSongs();
+}
+
+function fmDur(d) {
+  if (!d || !isFinite(d) || d <= 0) return '';
+  d = Math.round(d);
+  return '⏱ ' + Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0');
+}
+
+function renderSongs() {
+  const view = document.getElementById('songsView');
+  if (!songs.length) {
+    view.innerHTML = '<div class="empty">🔍 找不到歌曲</div>';
+    return;
+  }
+  view.innerHTML = songs.map((s,i) => `
+    <div class="card ${i===0?'hot':''}">
+      <div class="avatar">🎵</div>
+      <div class="info">
+        <div class="name">${escapeHtml(s.name)}</div>
+        <div class="artist">${fmDur(s.duration)} ${escapeHtml(s.artist)} · ${escapeHtml(s.title)}</div>
+        <div class="badges">
+          ${s.backing_source ? '<span class="badge bg-noled" title="本片已是伴奏源，沒有原唱可切">伴奏 · 本片即伴奏</span><span class="badge bg-no" title="無原唱可切導唱">無原聲</span>'
+          : '<span class="badge bg-vocal" title="可切導唱，播放原聲">原聲</span>' +
+            (s.has_backing ? '<span class="badge bg-yes" title="切伴唱播放獨立伴奏母帶">伴奏 · 原版母帶</span>'
+             : '<span class="badge bg-mix" title="切伴唱用 X-MIX 即時消人聲，效果視 MV 而定">伴奏 · X-MIX即時</span>')}
+        </div>
+      </div>
+      <div class="btns">
+        <button class="listen" id="listen-${i}" onclick="listen('${i}')">▶ 試聽</button>
+        <button class="add" onclick="play('${encodeURIComponent(s.path)}')">點歌</button>
+        ${!s.has_backing && !s.backing_source ? `<button class="bk" title="從 YouTube 搜尋純伴奏" onclick="findBacking('${encodeURIComponent(s.path)}')">🔎</button>` : ''}
+        <button class="del" title="刪除這首歌(含字幕/伴奏)" onclick="delSong(${i})">🗑</button>
+      </div>
+    </div>
+  `).join('');
+  window._songsDom = songs;
+}
+
+function listen(i) {
+  const s = window._songsDom[i];
+  const video = document.getElementById('mVideo');
+  const mp = document.getElementById('miniPlayer');
+  document.getElementById('mName').textContent = s.name;
+  video.src = '/api/preview?path=' + encodeURIComponent(s.path);
+  loadLyrics(s.url);
+  video.play().then(() => {
+    mp.classList.add('show');
+    document.querySelectorAll('.card .listen').forEach(b => b.classList.remove('playing'));
+    const btn = document.getElementById('listen-' + i);
+    if (btn) btn.classList.add('playing');
+    showToast('🔊 正在手機上試聽');
+  }).catch(() => showToast('⚠️ 無法播放，檔案可能不支援'));
+}
+
+function closeMini() {
+  const video = document.getElementById('mVideo');
+  const mp = document.getElementById('miniPlayer');
+  try { video.pause(); video.removeAttribute('src'); video.load(); } catch(e) {}
+  mp.classList.remove('show');
+  document.querySelectorAll('.card .listen').forEach(b => b.classList.remove('playing'));
+}
+
+function toggleQR() {
+  const ov = document.getElementById('qrOverlay');
+  const show = !ov.classList.contains('show');
+  ov.classList.toggle('show', show);
+  if (show) {
+    const img = document.getElementById('qrImg');
+    img.src = '/qr.png?url=' + encodeURIComponent(location.origin + '/dj');
+  }
+}
+
+async function delSong(i) {
+  const s = songs[i];
+  if (!s) return;
+  if (!confirm(`確定要刪除「${s.name}」嗎？\n檔案會從硬碟移除，無法復原。`)) return;
+  const fd = new FormData();
+  fd.append('path', s.path);
+  try {
+    const res = await fetch('/api/delete', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('🗑 已刪除');
+      loadSongs(document.getElementById('q').value);
+    } else {
+      showToast('⚠️ 刪除失敗：' + (data.error || ''));
+    }
+  } catch(e) { showToast('⚠️ 刪除失敗'); }
+}
+
+async function findBacking(path) {
+  try {
+    const r = await fetch('/api/find_backing?path=' + path);
+    const d = await r.json();
+    if (!d.ok) { showToast('⚠️ ' + (d.error || '無法開始')); return; }
+    if (d.note) { showToast(d.note); return; }
+    showToast('🔎 搜尋純伴奏中，完成會通知…');
+    pollBacking(path);
+  } catch(e) { showToast('⚠️ 網路錯誤'); }
+}
+
+async function pollBacking(path) {
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    try {
+      const s = await (await fetch('/api/backing_status?path=' + path)).json();
+      const st = s.self || {};
+      if (st.status === 'ok') {
+        showToast('✅ ' + (st.msg || '已取得純伴奏！'));
+        loadSongs(document.getElementById('q').value);
+        refreshState();
+        return;
+      }
+      if (st.status === 'err') {
+        showToast('⚠️ ' + (st.msg || '找不到伴奏'));
+        loadSongs(document.getElementById('q').value);
+        return;
+      }
+    } catch(e) {}
+  }
+}
+
+/* ===== 還原缺失的 JS：工具 / 點歌 / 狀態輪詢 / 播放清單 / 控制 / 下載 / 搜尋 ===== */
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+async function loadLyrics(url) {
+  window._cues = null;
+  const line = document.getElementById('lyricLine');
+  if (!line) return;
+  if (!url) { line.textContent = '點歌後顯示歌詞...'; return; }
+  try {
+    const r = await fetch('/api/subtitle?url=' + encodeURIComponent(url));
+    const d = await r.json();
+    if (d.ok && Array.isArray(d.lyrics) && d.lyrics.length) { window._cues = d.lyrics; line.textContent = '歌詞已載入'; }
+    else line.textContent = '無歌詞';
+  } catch(e) { line.textContent = '無歌詞'; }
+}
+
+const _mVideo = document.getElementById('mVideo');
+if (_mVideo) _mVideo.addEventListener('timeupdate', function() {
+  const line = document.getElementById('lyricLine');
+  if (!line || !window._cues || !window._cues.length) return;
+  const t = this.currentTime;
+  let txt = '';
+  for (const c of window._cues) {
+    if (t >= c.start && t < c.end) { txt = c.text || ''; break; }
+  }
+  line.textContent = txt || '';
+});
+
+async function play(path) {
+  try {
+    const r = await fetch('/api/play?path=' + path);
+    const d = await r.json();
+    if (d.ok) { showToast('✅ 已加入播放清單'); refreshState(); }
+    else showToast('⚠️ ' + (d.error || '點歌失敗'));
+    if (currentTab === 'queue') renderQueue();
+  } catch(e) { showToast('⚠️ 網路錯誤'); }
+}
+
+async function refreshState() {
+  try {
+    const r = await fetch('/api/state');
+    const s = await r.json();
+    const song = document.getElementById('npSong');
+    const status = document.getElementById('npStatus');
+    const posEl = document.getElementById('npPos');
+    const dot = document.getElementById('npDot');
+    const modeRow = document.getElementById('modeRow');
+    if (s.playing && s.current) {
+      const cur = s.current;
+      let nm = cur.title || cur.name || cur.path;
+      if (cur.artist && cur.artist !== '未知') nm = cur.artist + ' - ' + nm;
+      song.textContent = '🎵 ' + nm;
+      status.textContent = '播放中';
+      dot.style.background = '#4ade80';
+      posEl.textContent = ' ' + (s.pos != null ? fmDur(s.pos) + (s.dur ? ' / ' + fmDur(s.dur) : '') : '');
+      if (modeRow) modeRow.style.display = s.playing ? 'flex' : 'none';
+      document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === s.mode));
+    } else {
+      song.textContent = '尚未播放';
+      status.textContent = '等待點歌...';
+      dot.style.background = '#94a3b8';
+      posEl.textContent = '';
+      if (modeRow) modeRow.style.display = 'none';
+    }
+    const df = document.getElementById('diskFill');
+    const dt = document.getElementById('diskTxt');
+    if (df && dt && s.disk_total) {
+      const p = s.disk_percent || 0;
+      df.style.width = Math.min(100, p) + '%';
+      df.classList.toggle('warn', p >= 70 && p < 90);
+      df.classList.toggle('danger', p >= 90);
+      dt.textContent = '💾 ' + (s.disk_free / 1073741824).toFixed(2) + 'G 可用 (' + p + '%)';
+    }
+    const qc = document.getElementById('queueCount');
+    if (qc) qc.textContent = s.queue_len > 0 ? String(s.queue_len) : '';
+    const volEl = document.getElementById('vol');
+    if (volEl && volEl.value != s.volume) { volEl.value = s.volume; const vp = document.getElementById('volPct'); if (vp) vp.textContent = s.volume; }
+    if (currentTab === 'queue') renderQueue();
+  } catch(e) {}
+}
+
+async function renderQueue() {
+  const view = document.getElementById('queueView');
+  if (!view) return;
+  try {
+    const r = await fetch('/api/queue');
+    const q = await r.json();
+    if (!q.length) { view.innerHTML = '<div class="empty">📋 播放清單是空的</div>'; return; }
+    view.innerHTML = q.map(it => {
+      const pct = (it.dur > 0 && it.pos != null) ? Math.min(100, 100 * it.pos / it.dur) : 0;
+      const noCls = it.active ? (it.playing ? 'now' : 'next') : '';
+      return `
+      <div class="qitem ${it.played ? 'played' : ''}">
+        <div class="no ${noCls}">${it.playing ? '▶' : it.active ? '⏸' : it.index + 1}</div>
+        <div class="info">
+          <div class="name">${escapeHtml(it.name)}</div>
+          <div class="tag">${it.has_backing ? '🔊 有伴奏' : it.backing_source ? '🎵 本片即伴奏' : '🎤 原唱（X-MIX 即時消音）'}</div>
+          ${it.active ? `
+          <div class="qseek">
+            <div class="qbar"><div class="qbarfill ${it.playing ? '' : 'paused'}" style="width:${pct}%"></div></div>
+            <input class="qrange" type="range" min="0" max="${Math.round(it.dur || 0)}" value="${Math.round(it.pos || 0)}"
+              oninput="this.nextElementSibling.textContent=fmDur(+(this.value))"
+              onchange="seekQ(this.value)">
+          </div>` : ''}
+          <div class="qtxt">${it.active ? fmDur(it.pos) + ' / ' + fmDur(it.dur) : (it.played ? '✅ 已播放' : '')}</div>
+        </div>
+        <div class="btns">
+          ${it.played ? `<button class="replay" onclick="playIndex(${it.index})">↺ 重播</button>` : ''}
+          <button class="rm" title="從清單移除" onclick="removeQ(${it.index})">✕</button>
+        </div>
+      </div>`}).join('');
+  } catch(e) {}
+}
+
+async function seekQ(pos) {
+  try { await fetch('/api/seek?pos=' + pos); refreshState(); } catch(e) {}
+}
+
+async function playIndex(i) {
+  try {
+    const r = await fetch('/api/playindex?index=' + i);
+    const d = await r.json();
+    showToast(d.ok ? '▶ 切換播放' : '⚠️ ' + (d.error || '播放失敗'));
+    refreshState();
+  } catch(e) {}
+}
+
+async function removeQ(i) {
+  try {
+    const d = await (await fetch('/api/remove?index=' + i)).json();
+    showToast(d.ok ? '✅ 已移除' : '⚠️ ' + (d.error || '移除失敗'));
+    refreshState();
+  } catch(e) { showToast('⚠️ 網路錯誤'); }
+}
+
+function bindClick(id, okMsg) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', async () => {
+    try {
+      const d = await (await fetch(el.dataset.api)).json();
+      showToast(d.ok ? okMsg(d) : '⚠️ ' + (d.error || '操作失敗'));
+    } catch(e) { showToast('⚠️ 網路錯誤'); }
+    refreshState();
+  });
+}
+document.getElementById('btnPrev').dataset.api = '/api/prev';
+document.getElementById('btnPause').dataset.api = '/api/pause';
+document.getElementById('btnNext').dataset.api = '/api/next';
+bindClick('btnPrev', () => '⏮ 已切換上一首');
+bindClick('btnPause', d => d.playing ? '▶ 已播放' : '⏸ 已暫停');
+bindClick('btnNext', () => '⏭ 已切換下一首');
+
+(function() {
+  const volEl = document.getElementById('vol');
+  const volPct = document.getElementById('volPct');
+  if (volEl && volPct) {
+    volEl.addEventListener('input', () => { volPct.textContent = volEl.value; });
+    volEl.addEventListener('change', async () => {
+      try { await fetch('/api/volume?v=' + volEl.value); } catch(e) {}
+      refreshState();
+    });
+  }
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        const d = await (await fetch('/api/toggle_mode?mode=' + btn.dataset.mode)).json();
+        showToast(d.ok ? (btn.dataset.mode === 'backing' ? '🎵 已切換伴奏' : '🎤 已切換導唱') : '⚠️ ' + (d.error || '切換失敗'));
+      } catch(e) { showToast('⚠️ 網路錯誤'); }
+      refreshState();
+    });
+  });
+})();
+
+document.querySelectorAll('[data-tab]').forEach(b => {
+  b.addEventListener('click', () => {
+    currentTab = b.dataset.tab;
+    document.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('active', x === b));
+    document.getElementById('songsView').style.display = currentTab === 'songs' ? '' : 'none';
+    const qv = document.getElementById('queueView');
+    if (qv) qv.style.display = currentTab === 'queue' ? '' : 'none';
+    if (currentTab === 'queue') renderQueue();
+  });
+});
+
+let searchTimer = null;
+const qInput = document.getElementById('q');
+if (qInput) qInput.addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadSongs(e.target.value.trim()), 300);
+});
+
+async function downloadUrl() {
+  const inp = document.getElementById('urlInput');
+  const box = document.getElementById('dlProgress');
+  if (!inp || !box) return;
+  const url = inp.value.trim();
+  if (!url) { showToast('⚠️ 請先貼上網址'); return; }
+  box.classList.add('show');
+  document.getElementById('dlStatus').textContent = '下載中...';
+  const bar = document.getElementById('dlBar');
+  if (bar) bar.style.display = 'none';
+  try {
+    const r = await fetch('/api/download_url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url })
+    });
+    const d = await r.json();
+    if (!d.ok) { showToast('⚠️ ' + (d.error || '下載失敗')); box.classList.remove('show'); return; }
+    pollDownload();
+  } catch(e) { showToast('⚠️ 網路錯誤'); box.classList.remove('show'); }
+}
+
+function pollDownload() {
+  const bar = document.getElementById('dlBar');
+  const fill = document.getElementById('dlFill');
+  const st = document.getElementById('dlStatus');
+  const box = document.getElementById('dlProgress');
+  if (bar && fill) bar.style.display = 'block';
+  const t = setInterval(async () => {
+    try {
+      const d = await (await fetch('/api/download_progress')).json();
+      if (d.done) {
+        clearInterval(t);
+        st.textContent = '✅ ' + d.name;
+        showToast('✅ 下載完成');
+        loadSongs(document.getElementById('q').value);
+        setTimeout(() => box.classList.remove('show'), 2500);
+        return;
+      }
+      if (d.error) { clearInterval(t); st.textContent = '⚠️ ' + d.error; return; }
+      if (d.stage === 'burn_qr') {
+        st.textContent = '🔳 烙印 QR code 中，請稍候…（約需幾分鐘）';
+        if (fill) fill.style.width = '100%';
+      } else {
+        st.textContent = '下載中 ' + (d.percent != null ? d.percent + '%' : '…') + (d.speed ? ' (' + d.speed + ')' : '');
+        if (d.percent != null && fill) fill.style.width = d.percent + '%';
+      }
+    } catch(e) {}
+  }, 1200);
+}
+
+async function ytSearch() {
+  const q = document.getElementById('ytSearch').value.trim();
+  const box = document.getElementById('ytResults');
+  if (!q) { showToast('⚠️ 請輸入歌名 + 歌手'); return; }
+  box.style.opacity = 0.5;
+  try {
+    const r = await fetch('/api/ytsearch?q=' + encodeURIComponent(q));
+    const d = await r.json();
+    box.style.opacity = 1;
+    if (!d.ok) { showToast('⚠️ ' + (d.error || '搜尋失敗')); return; }
+    const results = d.results || [];
+    if (results.length === 0) { box.innerHTML = ''; showToast('⚠️ 沒有找到結果'); return; }
+    showToast('✅ 搜尋成功，找到 ' + results.length + ' 筆');
+    box.innerHTML = results.slice(0, 8).map(rs => `
+      <div class="yt-item">
+        <div class="yt-info">
+          <div class="yt-title">${escapeHtml(rs.title)}</div>
+          <div class="yt-artist">${escapeHtml(rs.artist)}</div>
+          <div class="yt-time">⏱ ${fmDur(rs.duration)}<span class="yt-tag tag-${(rs.tag === '現場' ? 'live' : rs.tag === '歌曲' ? 'song' : 'other')}">${rs.tag || ''}</span></div>
+        </div>
+        <div class="yt-btns">
+          <button class="yt-play" onclick="ytPlay('${rs.id}')">⬇ 下載</button>
+        </div>
+      </div>`).join('');
+  } catch(e) { box.style.opacity = 1; showToast('⚠️ 網路錯誤'); }
+}
+
+async function ytPlay(id) {
+  const box = document.getElementById('dlProgress');
+  if (!id) return;
+  box.classList.add('show');
+  document.getElementById('dlStatus').textContent = '下載中...';
+  const bar = document.getElementById('dlBar');
+  if (bar) bar.style.display = 'none';
+  try {
+    const r = await fetch('/api/download_url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://www.youtube.com/watch?v=' + id })
+    });
+    const d = await r.json();
+    if (!d.ok) { showToast('⚠️ ' + (d.error || '下載失敗')); box.classList.remove('show'); return; }
+    pollDownload();
+  } catch(e) { showToast('⚠️ 網路錯誤'); box.classList.remove('show'); }
+}
+
+loadSongs();
+refreshState();
+setInterval(refreshState, 2000);
+
+</script>
+</body>
+</html>

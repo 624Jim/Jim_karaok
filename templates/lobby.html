@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🎤 點歌服務</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family:-apple-system,'Segoe UI',Roboto,'Noto Sans TC',sans-serif;
+  min-height:100vh;
+  display:flex; align-items:center; justify-content:center;
+  padding:24px;
+  background: radial-gradient(1200px 600px at 20% -10%, #3a1d6e 0%, #1e1e2f 55%, #111120 100%);
+  color:#eee;
+}
+.card {
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:24px;
+  padding:40px 36px;
+  max-width:420px;
+  width:100%;
+  text-align:center;
+  backdrop-filter:blur(6px);
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+.card h1 { font-size:1.7rem; margin-bottom:6px; letter-spacing:1px; }
+.card .sub { color:#b9a8e8; margin-bottom:26px; font-size:.95rem; }
+.qr {
+  background:#fff;
+  border-radius:16px;
+  padding:14px;
+  display:inline-block;
+  margin-bottom:22px;
+  box-shadow:0 0 0 4px rgba(233,69,96,.35);
+}
+.qr img { display:block; width:230px; height:230px; border-radius:6px; }
+.url {
+  font-size:.85rem;
+  color:#cdc3f0;
+  background:rgba(0,0,0,.25);
+  border-radius:8px;
+  padding:10px;
+  margin-bottom:20px;
+  word-break:break-all;
+  user-select:all;
+}
+.btn {
+  display:inline-block;
+  background:linear-gradient(135deg,#e94560,#ff6b9d);
+  color:#fff;
+  text-decoration:none;
+  font-size:1.05rem;
+  font-weight:700;
+  padding:15px 30px;
+  border-radius:999px;
+  box-shadow:0 8px 24px rgba(233,69,96,.4);
+  transition:transform .15s;
+}
+.btn:hover { transform:translateY(-2px); }
+.hint { margin-top:22px; font-size:.8rem; color:#98; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🎤 點歌服務</h1>
+  <div class="sub">讓每個人用手機點歌</div>
+  <div class="qr">
+    <img src="/qr.png" alt="QR Code">
+  </div>
+  <div class="url">📶 {{ url }}</div>
+  <a class="btn" href="/dj">📲 掃碼或是直接進入點歌</a>
+  <div class="hint">手機連上同一個 Wi-Fi，<br>掃 QR Code 就能開始點歌</div>
+</div>
+</body>
+</html>
