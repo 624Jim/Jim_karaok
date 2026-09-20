@@ -581,14 +581,19 @@ if (_mVideo) _mVideo.addEventListener('timeupdate', function() {
   line.textContent = txt || '';
 });
 
+const playing_now = new Set();
 async function play(path) {
+  if (playing_now.has(path)) return;  // 同一首正在送出，忽略連點
+  playing_now.add(path);
   try {
     const r = await fetch('/api/play?path=' + path);
     const d = await r.json();
-    if (d.ok) { showToast('✅ 已加入播放清單'); refreshState(); }
+    if (d.ok) showToast(d.dup ? 'ℹ️ 這首已經在播放清單裡了' : '✅ 已加入播放清單');
     else showToast('⚠️ ' + (d.error || '點歌失敗'));
-    if (currentTab === 'queue') renderQueue();
+    await refreshState();
+    if (currentTab === 'queue') await renderQueue();
   } catch(e) { showToast('⚠️ 網路錯誤'); }
+  finally { playing_now.delete(path); }
 }
 
 async function refreshState() {
@@ -782,13 +787,8 @@ function pollDownload() {
         return;
       }
       if (d.error) { clearInterval(t); st.textContent = '⚠️ ' + d.error; return; }
-      if (d.stage === 'burn_qr') {
-        st.textContent = '🔳 烙印 QR code 中，請稍候…（約需幾分鐘）';
-        if (fill) fill.style.width = '100%';
-      } else {
-        st.textContent = '下載中 ' + (d.percent != null ? d.percent + '%' : '…') + (d.speed ? ' (' + d.speed + ')' : '');
-        if (d.percent != null && fill) fill.style.width = d.percent + '%';
-      }
+      st.textContent = '下載中 ' + (d.percent != null ? d.percent + '%' : '…') + (d.speed ? ' (' + d.speed + ')' : '');
+      if (d.percent != null && fill) fill.style.width = d.percent + '%';
     } catch(e) {}
   }, 1200);
 }

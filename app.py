@@ -15,7 +15,9 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SONGS_DIR = os.path.join(BASE_DIR, 'songs')
 PORT = int(os.environ.get('PORT', 5000))
-QR_STICKER = os.path.join(BASE_DIR, 'qr_sticker_xs2.png')
+# 播放时由 mpv 叠在左上角的 QR 图（raw BGRA，尺寸/位置为屏幕像素，1080p 屏）；由 make_qr_overlay.py 生成
+QR_OVERLAY = os.path.join(BASE_DIR, 'qr_overlay.bgra')
+QR_OVERLAY_W, QR_OVERLAY_H, QR_OVERLAY_POS = 256, 327, (45, 45)
 
 
 def _safe_songs_path(path):
@@ -385,7 +387,6 @@ dl_job = {
     'percent': 0.0, 'speed': '', 'eta': '',
     'name': '', 'index': -1,
     'force_play': False,
-    'stage': '',  # '' | 'download' | 'burn_qr'，供前端显示当前在哪个阶段
 }
 
 
@@ -522,6 +523,13 @@ def find_songs():
 MPV_SOCK = '/tmp/jukebox-mpv.sock'
 # 播放開始時間（秒級），供 auto_advance 判斷是否「真正播了一段」才決定刪檔
 spawn_ts = 0.0
+USE_IPC_SWITCH = True
+
+
+def _daemon_alive():
+    with player_lock:
+        return (player_proc is not None and player_proc.poll() is None
+                and os.path.exists(MPV_SOCK))
 _MIN_PLAY_SECS = 3  # 至少播過 3 秒才納入「正常結束」考慮（防崩潰/秒退誤刪）
 AF_DEFAULT = ''
 # 伴唱滤链（⑥号方案「分频保留低频」）：
@@ -612,8 +620,14 @@ def _kill_player():
         except OSError:
             pass
     if p is not None:
+        # 还活着就先 SIGTERM 让 mpv 立刻退出；原本是空等 1 秒才强杀，切歌白白慢 1 秒
+        if p.poll() is None:
+            try:
+                p.terminate()
+            except OSError:
+                pass
         try:
-            p.wait(timeout=1)
+            p.wait(timeout=0.4)
         except (subprocess.TimeoutExpired, ValueError, OSError):
             try:
                 p.kill()
@@ -671,18 +685,14 @@ def play(path, mode=None, sub=None, audio_path=None, mark_path=None):
     global player_proc, spawn_ts
     m = mode if mode is not None else state['mode']
     ap = audio_path or path
-    q = _with_qr(path)
-    if q is not None:
-        path = q
     af = _af_with_gain(_mpv_af(m, ap), _gain_db(ap))
     _ensure_loudness(ap)  # 没量过的先量（后台），量完若仍在播即套用
     mp = mark_path or path
     _dbg('play: path=%s mode=%s' % (os.path.basename(path), m))
-    with player_lock:
-        daemon_ok = (player_proc is not None and player_proc.poll() is None
-                     and os.path.exists(MPV_SOCK))
+    daemon_ok = USE_IPC_SWITCH and _daemon_alive()
     if not daemon_ok:
         _spawn_play(path, m, af, sub)
+        _add_qr_overlay()
         _mark_usage(mp)
         return
     spawn_ts = time.time()
@@ -694,10 +704,12 @@ def play(path, mode=None, sub=None, audio_path=None, mark_path=None):
         _dbg('play: daemon坏掉,收尸走单次启动')
         _kill_player()
         _spawn_play(path, m, af, sub)
+        _add_qr_overlay()
         return
     if sub:
         ipc_send(['sub-add', sub, 'select'])
     ipc_send(['set_property', 'volume', state['volume']])
+    _add_qr_overlay()
     with player_lock:
         state['playing'] = True
     _mark_usage(mp)
@@ -710,41 +722,21 @@ def stop_player():
     state['playing'] = False
 
 
-def _with_qr(path):
-    """若存在同名 _qr 档（已烙上「扫码点歌」二维码贴纸），优先播它；无则 None"""
-    try:
-        base, ext = os.path.splitext(path)
-        q = '%s_qr%s' % (base, ext)
-        return q if os.path.isfile(q) else None
-    except Exception:
-        return None
+def _add_qr_overlay():
+    """后台把 QR 叠加图送进 mpv（等 mpv 的 IPC 起来；重复添加同 id 只是覆盖）。"""
+    if not os.path.isfile(QR_OVERLAY):
+        return
 
-
-def _burn_qr(path):
-    """给影片烧录「扫码点歌」QR 贴纸，生成同目录 xxx_qr.<ext>（供 _with_qr 找到）。
-    参数与 /tmp/burn_hq.py 手动流程一致（libx264 crf17 veryfast，已验证的组合）。
-    只处理视频；失败静默返回 False，不影响原档正常播放（退回无 QR 版）。"""
-    if os.path.splitext(path)[1].lower() not in VIDEO_EXTS:
-        return False
-    if not os.path.isfile(QR_STICKER):
-        return False
-    base, ext = os.path.splitext(path)
-    out = base + '_qr' + ext
-    try:
-        proc = subprocess.run(
-            ['ffmpeg', '-y', '-i', path, '-i', QR_STICKER,
-             '-filter_complex', 'overlay=20:20',
-             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17',
-             '-pix_fmt', 'yuv420p', '-c:a', 'copy', out],
-            capture_output=True, text=True, timeout=900)
-        if proc.returncode != 0 or not os.path.isfile(out):
-            _dbg('burn-qr: 失败 %s' % ((proc.stderr or '')[-300:]))
-            return False
-        _dbg('burn-qr: 完成 %s' % os.path.basename(out))
-        return True
-    except Exception as e:
-        _dbg('burn-qr: 例外 %s' % e)
-        return False
+    def job():
+        w, h = QR_OVERLAY_W, QR_OVERLAY_H
+        for _ in range(40):
+            r = ipc_send(['overlay-add', 1, QR_OVERLAY_POS[0], QR_OVERLAY_POS[1], QR_OVERLAY,
+                          0, 'bgra', w, h, w * 4], timeout=1, quiet=True)
+            if r is not None and r.get('error') == 'success':
+                return
+            time.sleep(0.25)
+        _dbg('qr-overlay: 10 秒内没能叠上')
+    threading.Thread(target=job, daemon=True).start()
 
 
 def current_play_path(song):
@@ -1151,12 +1143,20 @@ def api_play():
             'backing_source': any(k in name.lower() for k in (
                 '原版伴奏', 'karaoke version', '纯伴奏', 'slow版伴奏')),
             'duration': _get_duration(path)}
-    state['queue'].append(song)
+    with player_lock:
+        # 同一首歌已在清单里（正在播/等待中）就不重复加入，连点多次也只会有一首
+        for i, q in enumerate(state['queue']):
+            if q.get('path') == path:
+                return jsonify({'ok': True, 'dup': True, 'index': i})
+        state['queue'].append(song)
+        idx = len(state['queue']) - 1
+        start_now = not state['playing']
+        if start_now:
+            state['current_index'] = idx
     # 若当前没有真正在播放，立即播放这首新歌
-    if not state['playing']:
-        state['current_index'] = len(state['queue']) - 1
+    if start_now:
         play_current()
-    return jsonify({'ok': True, 'index': len(state['queue']) - 1})
+    return jsonify({'ok': True, 'index': idx})
 
 
 @app.route('/api/playindex')
@@ -1543,7 +1543,7 @@ def _title_song_score(title, dur):
 def _download_worker(url):
     """后台下载：yt-dlp 输出进度行到日志文件，完成后入库并（可选）立即播放。"""
     dl_job.update({'busy': True, 'done': False, 'error': '', 'percent': 0.0,
-                   'speed': '', 'eta': '', 'name': '', 'index': -1, 'stage': 'download'})
+                   'speed': '', 'eta': '', 'name': '', 'index': -1})
     os.makedirs(SONGS_DIR, exist_ok=True)
     logf = open(dl_job['log'], 'w', errors='replace')
     logf.close()
@@ -1630,10 +1630,6 @@ def _download_worker(url):
     path = candidates[0][1]
     _mark_usage(path, field='added')  # 记录下载时间，供自动清理判断新旧
     threading.Thread(target=_measure_loudness, args=(path,), daemon=True).start()
-    # 新歌一律先烧「扫码点歌」QR 再入库播放，确保第一次播放就有 QR（用户要求）
-    dl_job['stage'] = 'burn_qr'
-    _burn_qr(path)
-    dl_job['stage'] = ''
     name = os.path.splitext(os.path.basename(path))[0]
     ext = os.path.splitext(path)[1].lower()
     subtitle = find_subtitle(path)
@@ -1700,7 +1696,6 @@ def api_download_progress():
         'busy': dl_job['busy'], 'done': dl_job['done'], 'error': dl_job['error'],
         'percent': pct, 'speed': speed, 'eta': eta,
         'name': dl_job['name'], 'index': dl_job['index'],
-        'stage': dl_job.get('stage', ''),
     })
 
 
