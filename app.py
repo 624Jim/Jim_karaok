@@ -71,6 +71,7 @@ state = {
     'queue': [],          # 播放队列（歌曲路径列表）
     'current_index': -1,  # 当前播放的队列索引
     'playing': False,
+    'paused': False,      # 使用者手动暂停（自动推进线程看到它就不要擅自恢复播放）
     'volume': _load_volume(),   # 默认音量（从持久化文件读取）
     'current': None,      # 当前歌曲信息
     'mode': 'lead',       # 'lead'=导唱(人声) 'backing'=伴奏
@@ -720,6 +721,7 @@ def stop_player():
     global player_proc
     _kill_player()
     state['playing'] = False
+    state['paused'] = False
 
 
 def _add_qr_overlay():
@@ -753,6 +755,7 @@ def play_current(new_mode=None):
         song = state['queue'][state['current_index']]
         state['current'] = song
         state['playing'] = True
+        state['paused'] = False
         m = new_mode if new_mode is not None else state['mode']
         sub = song.get('subtitle') or find_subtitle(song['path'])
         if m == 'backing' and song.get('backing'):
@@ -860,12 +863,15 @@ def auto_advance():
                 alive = player_proc is not None and player_proc.poll() is None
                 has_proc = player_proc is not None
             if not was_playing:
+                # 暂停/停止期间进度本来就不动：卡死侦测的计时要归零，
+                # 否则恢复播放时会被误判成「冻结过久」而整首重播
+                stall_pos, stall_t0 = None, time.time()
                 with player_lock:
                     idle_q = bool(state['queue'])
                     idle_song_ok = (state['queue']
                                     and 0 <= state['current_index'] < len(state['queue']))
                     idle_p = player_proc
-                if idle_song_ok and not state['playing']:
+                if idle_song_ok and not state['playing'] and not state['paused']:
                     play_current()  # 有歌单却没在播（意外停止/启动后）→ 恢复播放
                 elif not idle_q and idle_p is not None and idle_p.poll() is None:
                     _kill_player()  # 歌单播空仍占用屏幕 → 退出 mpv，露出点歌界面
@@ -1203,9 +1209,11 @@ def api_pause():
         if state['playing']:
             ipc_send(['set_property', 'pause', True])
             state['playing'] = False
+            state['paused'] = True
         else:
             ipc_send(['set_property', 'pause', False])
             state['playing'] = True
+            state['paused'] = False
     elif p is not None and p.poll() is None:
         if state['playing']:
             try:
@@ -1213,12 +1221,14 @@ def api_pause():
             except OSError:
                 pass
             state['playing'] = False
+            state['paused'] = True
         else:
             try:
                 os.kill(p.pid, signal.SIGCONT)
             except OSError:
                 pass
             state['playing'] = True
+            state['paused'] = False
     return jsonify({'ok': True, 'playing': state['playing']})
 
 
