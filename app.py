@@ -10,6 +10,16 @@ import subprocess
 import signal
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response, send_file, redirect
 
+try:
+    import zhconv
+    def _to_tw(s):
+        if not s:
+            return s
+        return zhconv.convert(s, 'zh-hant')
+except Exception:
+    def _to_tw(s):
+        return s
+
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -481,6 +491,8 @@ def find_songs():
                 if name.lower().endswith(mark):
                     name = name[:-len(mark)]
                     break
+            raw_name = name
+            name = _to_tw(name)   # 顯示用繁體；raw_name 保留原始檔名供匹配
             artist = '未知'
             title = name
             m = re.split(r'[-_—–]', name, maxsplit=1)
@@ -489,7 +501,7 @@ def find_songs():
                 title = m[1].strip()
             subtitle = find_subtitle(path)
             backing = find_backing(path)
-            low_name = name.lower()
+            low_name = raw_name.lower()
             backing_source = any(k in low_name for k in (
                 '原版伴奏', 'karaoke version', '纯伴奏', 'slow版伴奏'))
             songs.append({
@@ -1151,7 +1163,7 @@ def api_play():
         return jsonify({'ok': False, 'error': '只能播放 songs 目录内的文件'})
     if not os.path.isfile(path):
         return jsonify({'ok': False, 'error': '文件不存在'})
-    name = os.path.splitext(os.path.basename(path))[0]
+    name = _to_tw(os.path.splitext(os.path.basename(path))[0])
     ext = os.path.splitext(path)[1].lower()
     subtitle = find_subtitle(path)
     backing = find_backing(path)
@@ -1268,7 +1280,7 @@ def api_queue():
     for i, s in enumerate(state['queue']):
         active = i == state['current_index']
         result.append({'index': i, 'path': s['path'],
-                       'name': os.path.splitext(os.path.basename(s['path']))[0],
+                       'name': _to_tw(os.path.splitext(os.path.basename(s['path']))[0]),
                        'active': active,
                        'playing': bool(active and state['playing']),
                        'pos': pos if active else None,
@@ -1492,7 +1504,7 @@ def parse_srt(path):
         start = to_sec(m.group(1), m.group(2), m.group(3), m.group(4))
         end = to_sec(m.group(5), m.group(6), m.group(7), m.group(8))
         text = ' '.join(lines[tline + 1:])
-        cues.append({'start': round(start, 3), 'end': round(end, 3), 'text': text})
+        cues.append({'start': round(start, 3), 'end': round(end, 3), 'text': _to_tw(text)})
     return cues
 
 
@@ -1555,13 +1567,13 @@ def api_ytsearch():
             vid = e.get('id')
             if not vid:
                 continue
-            title = e.get('title', '未知')
+            title = _to_tw(e.get('title', '未知'))
             dur = e.get('duration') or 0
             tag, score = _title_song_score(title, dur)
             results.append({
                 'id': vid,
                 'title': title,
-                'artist': (e.get('uploader') or e.get('channel') or '').strip() or '未知',
+                'artist': _to_tw((e.get('uploader') or e.get('channel') or '').strip()) or '未知',
                 'duration': dur,
                 'url': 'https://www.youtube.com/watch?v=' + vid,
                 'tag': tag,
@@ -1705,13 +1717,13 @@ def _download_worker(url):
     path = candidates[0][1]
     _mark_usage(path, field='added')  # 记录下载时间，供自动清理判断新旧
     threading.Thread(target=_measure_loudness, args=(path,), daemon=True).start()
-    name = os.path.splitext(os.path.basename(path))[0]
+    name = _to_tw(os.path.splitext(os.path.basename(path))[0])
     ext = os.path.splitext(path)[1].lower()
     subtitle = find_subtitle(path)
     backing = find_backing(path)
     song = {
         'name': name, 'path': path,
-        'artist': '网络', 'title': name,
+        'artist': '網路', 'title': name,
         'is_video': ext in VIDEO_EXTS,
         'subtitle': subtitle,
         'backing': backing,

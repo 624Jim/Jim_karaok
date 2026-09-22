@@ -11,6 +11,11 @@ k = W / 114.0
 H = int(146 * k)
 FBOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 FREG = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+import os as _os
+if not _os.path.isfile(FBOLD):
+    FBOLD = "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
+if not _os.path.isfile(FREG):
+    FREG = "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
 f_t = ImageFont.truetype(FBOLD, int(15 * k))
 f_u = ImageFont.truetype(FREG, int(8 * k))
 
@@ -30,7 +35,7 @@ def centered(y, font, txt, fill):
     d.text((int((W - (b[2] - b[0])) / 2), y), txt, font=font, fill=fill)
 
 
-centered(int((90 + 14) * k), f_t, "扫码点歌", (20, 20, 30, 255))
+centered(int((90 + 14) * k), f_t, "掃碼點歌", (20, 20, 30, 255))
 centered(int((90 + 33) * k), f_u, url, (80, 90, 105, 255))
 im.save("qr_overlay.png")
 
