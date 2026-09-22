@@ -77,6 +77,10 @@ state = {
     'mode': 'lead',       # 'lead'=导唱(人声) 'backing'=伴奏
 }
 
+# 本次佇列中「已播放過」的 index 集合（用於 frontend 顯示「已播放」狀態）
+# 只在每次佇列被建立/變動時維護；與磁碟上的 usage（歷史次數）無關。
+_played_idxs = set()
+
 # 使用 mpv 播放（树莓派上最稳，若没有则退回默认播放器）
 player_proc = None
 player_lock = threading.Lock()
@@ -467,7 +471,7 @@ def find_songs():
             name0 = os.path.splitext(f)[0]
             if name0.endswith('_伴奏') or '_伴奏mv' in name0:
                 continue
-            if name0.endswith('_qr'):
+            if name0.endswith('_qr') and (name0[:-3] + '.mp4' in all_files):
                 continue
             if name0 in conv_map and f != conv_map[name0]:
                 continue
@@ -690,10 +694,13 @@ def play(path, mode=None, sub=None, audio_path=None, mark_path=None):
     _ensure_loudness(ap)  # 没量过的先量（后台），量完若仍在播即套用
     mp = mark_path or path
     _dbg('play: path=%s mode=%s' % (os.path.basename(path), m))
+    # 已是烙印版（_qr.mp4 內建 QR）則不再疊 overlay，避免雙 QR
+    qr_burned = os.path.basename(path).lower().endswith('_qr.mp4')
     daemon_ok = USE_IPC_SWITCH and _daemon_alive()
     if not daemon_ok:
         _spawn_play(path, m, af, sub)
-        _add_qr_overlay()
+        if not qr_burned:
+            _add_qr_overlay()
         _mark_usage(mp)
         return
     spawn_ts = time.time()
@@ -705,12 +712,14 @@ def play(path, mode=None, sub=None, audio_path=None, mark_path=None):
         _dbg('play: daemon坏掉,收尸走单次启动')
         _kill_player()
         _spawn_play(path, m, af, sub)
-        _add_qr_overlay()
+        if not qr_burned:
+            _add_qr_overlay()
         return
     if sub:
         ipc_send(['sub-add', sub, 'select'])
     ipc_send(['set_property', 'volume', state['volume']])
-    _add_qr_overlay()
+    if not qr_burned:
+        _add_qr_overlay()
     with player_lock:
         state['playing'] = True
     _mark_usage(mp)
@@ -753,6 +762,7 @@ def play_current(new_mode=None):
     伴奏模式：优先「原MV影像+纯伴奏音轨」合成档；没有伴奏文件则播原文件+实时人声消除滤波器。"""
     if 0 <= state['current_index'] < len(state['queue']):
         song = state['queue'][state['current_index']]
+        _played_idxs.add(state['current_index'])
         state['current'] = song
         state['playing'] = True
         state['paused'] = False
@@ -983,8 +993,12 @@ def index():
 
 @app.route('/dj')
 def dj():
-    """点歌页：多人排队点歌"""
-    return render_template('index.html')
+    """点歌页：多人排队点歌，强制不缓存，确保手机总能拿到最新版"""
+    r = Response(render_template('index.html'))
+    r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    r.headers['Pragma'] = 'no-cache'
+    r.headers['Expires'] = '0'
+    return r
 
 
 @app.route('/qr.png')
@@ -1129,6 +1143,7 @@ def api_upload_backing():
 def api_play():
     """点歌：加入队列并立即播放"""
     raw_path = request.args.get('path', '')
+    force = request.args.get('force', '')
     if not raw_path:
         return jsonify({'ok': False, 'error': '缺少 path'})
     path = _safe_songs_path(raw_path)
@@ -1150,10 +1165,12 @@ def api_play():
                 '原版伴奏', 'karaoke version', '纯伴奏', 'slow版伴奏')),
             'duration': _get_duration(path)}
     with player_lock:
-        # 同一首歌已在清单里（正在播/等待中）就不重复加入，连点多次也只会有一首
-        for i, q in enumerate(state['queue']):
-            if q.get('path') == path:
-                return jsonify({'ok': True, 'dup': True, 'index': i})
+        # 重複規則：同一首歌若已在佇列中並且「從未播放過」就不重複加入；
+        # 若已播放過（唱過一次）則允許再點一次、再加一筆。
+        if any(q.get('path') == path for q in state['queue']):
+            if not force:
+                idx = next(i for i, q in enumerate(state['queue']) if q.get('path') == path)
+                return jsonify({'ok': True, 'dup': True, 'index': idx})
         state['queue'].append(song)
         idx = len(state['queue']) - 1
         start_now = not state['playing']
@@ -1239,6 +1256,7 @@ def api_stop():
     state['current'] = None
     state['current_index'] = 0
     state['queue'].clear()
+    _played_idxs.clear()
     return jsonify({'ok': True})
 
 
@@ -1246,8 +1264,6 @@ def api_stop():
 def api_queue():
     """返回播放队列"""
     pos, dur = _mpv_time()
-    usage = _load_usage()
-    played = {p for p, u in usage.items() if u.get('plays', 0) > 0}
     result = []
     for i, s in enumerate(state['queue']):
         active = i == state['current_index']
@@ -1257,7 +1273,7 @@ def api_queue():
                        'playing': bool(active and state['playing']),
                        'pos': pos if active else None,
                        'dur': (dur if active and dur else s.get('duration')) or s.get('duration'),
-                       'played': s.get('path') in played,
+                       'played': i in _played_idxs,
                        'has_backing': bool(s.get('backing')),
                        'backing_source': bool(s.get('backing_source'))})
     return jsonify(result)
@@ -1287,17 +1303,66 @@ def api_remove():
     with player_lock:
         if not (0 <= idx < len(state['queue'])):
             return jsonify({'ok': False, 'error': 'index out of range'})
-        cur = state['queue'][state['current_index']] if state['queue'] else None
-        if cur and cur.get('path') == state['queue'][idx].get('path'):
-            removed_cur = True
-        else:
-            removed_cur = False
+        removed_cur = (idx == state['current_index'])
         state['queue'].pop(idx)
-        state['current_index'] = max(0, min(state['current_index'], len(state['queue']) - 1 if state['queue'] else 0))
+        if removed_cur:
+            state['current_index'] = min(state['current_index'], len(state['queue']) - 1) if state['queue'] else 0
+        elif idx < state['current_index']:
+            state['current_index'] -= 1
+        # 維護已播放集合：被刪的 index 移除；較大的 index 前移一位
+        global _played_idxs
+        _played_idxs = {i - 1 if i > idx else i for i in _played_idxs}
+        _played_idxs.discard(idx)
     if removed_cur:
         stop_player()
         state['current'] = None
     return jsonify({'ok': True})
+
+
+@app.route('/api/clear')
+def api_clear():
+    """一鍵清空整個播放佇列（清檯／換別組客人用），並停止播放，同時把所有歌曲的播放次數歸零。"""
+    with player_lock:
+        state['queue'] = []
+        state['current_index'] = 0
+    _played_idxs.clear()
+    stop_player()
+    state['current'] = None
+    try:
+        u = _load_usage()
+        for k, e in u.items():
+            if isinstance(e, dict) and e.get('plays', 0) > 0:
+                e['plays'] = 0
+        _save_usage(u)
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'cleared': True})
+
+
+@app.route('/api/clear_songs')
+def api_clear_songs():
+    """一鍵清空歌庫：刪除 songs 目錄內所有歌曲（含伴奏/字幕/合成檔），並清空佇列停止播放。"""
+    with player_lock:
+        state['queue'] = []
+        state['current_index'] = 0
+    stop_player()
+    state['current'] = None
+    count = 0
+    for p in find_songs():
+        try:
+            deleted = _delete_song_files({'path': p['path'], 'backing': find_backing(p['path'])})
+            count += 1
+        except Exception:
+            continue
+    try:
+        u = _load_usage()
+        for p in list(u.keys()):
+            if not os.path.exists(p):
+                u.pop(p, None)
+        _save_usage(u)
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'cleared': True, 'deleted': count})
 
 
 @app.route('/api/state')

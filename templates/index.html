@@ -430,7 +430,14 @@ function renderSongs() {
     view.innerHTML = '<div class="empty">🔍 找不到歌曲</div>';
     return;
   }
-  view.innerHTML = songs.map((s,i) => `
+  const head = `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 12px;">
+      <div style="font-size:.8rem;color:var(--sub);" id="songsCount">${songs.length} 首歌</div>
+      <button class="rm" id="clearSongsBtn" onclick="clearAllSongs()"
+        style="width:auto;padding:8px 14px;font-size:.85rem;border-radius:10px;"
+        title="一鍵清空歌庫（刪除所有歌曲，含伴奏/字幕）">🗑 一鍵清空歌庫</button>
+    </div>`;
+  view.innerHTML = head + songs.map((s,i) => `
     <div class="card ${i===0?'hot':''}">
       <div class="avatar">🎵</div>
       <div class="info">
@@ -582,14 +589,24 @@ if (_mVideo) _mVideo.addEventListener('timeupdate', function() {
 });
 
 const playing_now = new Set();
-async function play(path) {
+async function play(path, force) {
   if (playing_now.has(path)) return;  // 同一首正在送出，忽略連點
   playing_now.add(path);
   try {
-    const r = await fetch('/api/play?path=' + path);
+    const r = await fetch('/api/play?path=' + path + (force ? '&force=1' : ''));
     const d = await r.json();
-    if (d.ok) showToast(d.dup ? 'ℹ️ 這首已經在播放清單裡了' : '✅ 已加入播放清單');
-    else showToast('⚠️ ' + (d.error || '點歌失敗'));
+    if (d.ok && d.dup) {
+      playing_now.delete(path);
+      if (confirm('這首歌已經在播放清單裡了，要再點一首（連唱兩首）嗎？')) {
+        await play(path, true);
+        return;
+      }
+      showToast('ℹ️ 已取消，這首歌已在清單裡');
+      await refreshState();
+      if (currentTab === 'queue') await renderQueue();
+      return;
+    }
+    showToast(d.ok ? '✅ 已加入播放清單' : '⚠️ ' + (d.error || '點歌失敗'));
     await refreshState();
     if (currentTab === 'queue') await renderQueue();
   } catch(e) { showToast('⚠️ 網路錯誤'); }
@@ -645,8 +662,18 @@ async function renderQueue() {
   try {
     const r = await fetch('/api/queue');
     const q = await r.json();
-    if (!q.length) { view.innerHTML = '<div class="empty">📋 播放清單是空的</div>'; return; }
-    view.innerHTML = q.map(it => {
+    const head = `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 12px;">
+        <div style="font-size:.8rem;color:var(--sub);">共 ${q.length} 首</div>
+        <button class="rm" id="clearAllBtn" onclick="clearQueueAll()" ${q.length ? '' : 'disabled'}
+          style="width:auto;padding:8px 14px;font-size:.85rem;border-radius:10px;${q.length ? '' : 'opacity:.35;'}"
+          title="一鍵清空播放清單">🗑 一鍵清空</button>
+      </div>`;
+    if (!q.length) {
+      view.innerHTML = head + '<div class="empty">📋 播放清單是空的</div>';
+      return;
+    }
+    view.innerHTML = head + q.map(it => {
       const pct = (it.dur > 0 && it.pos != null) ? Math.min(100, 100 * it.pos / it.dur) : 0;
       const noCls = it.active ? (it.playing ? 'now' : 'next') : '';
       return `
@@ -665,7 +692,7 @@ async function renderQueue() {
           <div class="qtxt">${it.active ? fmDur(it.pos) + ' / ' + fmDur(it.dur) : (it.played ? '✅ 已播放' : '')}</div>
         </div>
         <div class="btns">
-          ${it.played ? `<button class="replay" onclick="playIndex(${it.index})">↺ 重播</button>` : ''}
+          ${it.played ? `<button class="replay" onclick="playIndex(${it.index})">↺ 再點一次</button>` : ''}
           <button class="rm" title="從清單移除" onclick="removeQ(${it.index})">✕</button>
         </div>
       </div>`}).join('');
@@ -690,6 +717,46 @@ async function removeQ(i) {
     const d = await (await fetch('/api/remove?index=' + i)).json();
     showToast(d.ok ? '✅ 已移除' : '⚠️ ' + (d.error || '移除失敗'));
     refreshState();
+  } catch(e) { showToast('⚠️ 網路錯誤'); }
+}
+
+async function _doClearQueue(btn, idleText) {
+  if (!btn) return;
+  if (!btn.dataset.arm) {
+    btn.dataset.arm = '1';
+    btn.textContent = '⚠️ 確定要清空？';
+    btn.style.background = 'rgba(255,80,90,.3)';
+    setTimeout(() => { delete btn.dataset.arm; btn.textContent = idleText; btn.style.background = ''; }, 3500);
+    return;
+  }
+  try {
+    const d = await (await fetch('/api/clear')).json();
+    showToast(d.ok ? '🗑 播放清單已清空' : '⚠️ ' + (d.error || '清空失敗'));
+    refreshState();
+  } catch(e) { showToast('⚠️ 網路錯誤'); }
+}
+
+async function clearQueueAll() {
+  await _doClearQueue(document.getElementById('clearAllBtn'), '🗑 一鍵清空');
+}
+
+async function clearAllSongs() {
+  const btn = document.getElementById('clearSongsBtn');
+  if (!btn) return;
+  if (!btn.dataset.arm) {
+    btn.dataset.arm = '1';
+    btn.textContent = '⚠️ 確定清空歌庫？';
+    btn.style.background = 'rgba(255,80,90,.45)';
+    setTimeout(() => { delete btn.dataset.arm; btn.textContent = '🗑 一鍵清空歌庫'; btn.style.background = ''; }, 3500);
+    return;
+  }
+  try {
+    const d = await (await fetch('/api/clear_songs')).json();
+    showToast(d.ok ? '🗑 歌庫已清空' : '⚠️ ' + (d.error || '清空失敗'));
+    songs = [];
+    await refreshState();
+    renderSongs();
+    window.scrollTo({ top: 0 });
   } catch(e) { showToast('⚠️ 網路錯誤'); }
 }
 
